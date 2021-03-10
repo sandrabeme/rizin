@@ -73,6 +73,7 @@ EOF
 RUN
 
 NAME=: test format definitions
+BROKEN=1
 FILE=bins/mdmp/hello.dmp
 ARGS=-nn
 CMDS=pf.
