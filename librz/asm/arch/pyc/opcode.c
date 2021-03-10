@@ -127,6 +127,9 @@ static version_opcode version_op[] = {
 };
 
 bool pyc_opcodes_equal(pyc_opcodes *op, const char *version) {
+	if (!op) {
+		return false;
+	}
 	version_opcode *vop = version_op;
 
 	while (vop->version) {
