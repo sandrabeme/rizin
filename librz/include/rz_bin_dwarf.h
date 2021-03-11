@@ -808,10 +808,10 @@ typedef struct {
 	ut64 discriminator;
 } RzBinDwarfSMRegisters;
 
-typedef struct {
+typedef struct rz_bin_dwarf_line_file_entry_t {
 	char *name;
 	ut32 id_idx, mod_time, file_len;
-} file_entry;
+} RzBinDwarfLineFileEntry;
 
 typedef struct {
 	ut64 unit_length;
@@ -827,11 +827,21 @@ typedef struct {
 	ut8 segment_selector_size;
 	bool is_64bit;
 
-	ut8 *std_opcode_lengths;
-	char **include_directories;
-	file_entry *file_names;
+	ut8 *std_opcode_lengths; //< count is opcode_base
+	char **include_dirs;
+	size_t include_dirs_count;
+	RzBinDwarfLineFileEntry *file_names;
 	size_t file_names_count;
 } RzBinDwarfLineHeader;
+
+
+/**
+ * \brief DWARF 3 Standard Section 6.2 Line Number Information 
+ * This contains the entire line info for one compilation unit.
+ */
+typedef struct {
+	RzBinDwarfLineHeader header;
+} RzBinDwarfLineInfo;
 
 typedef struct rz_bin_dwarf_loc_entry_t {
 	ut64 start;
@@ -872,7 +882,7 @@ RZ_API const char *rz_bin_dwarf_get_unit_type_name(ut64 unit_type);
 RZ_API const char *rz_bin_dwarf_get_lang_name(ut64 lang);
 
 RZ_API RzList /*<RzBinDwarfARangeSet>*/ *rz_bin_dwarf_parse_aranges(RzBinFile *binfile);
-RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode);
+RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result);
 RZ_API RzBinDwarfDebugAbbrev *rz_bin_dwarf_parse_abbrev(RzBinFile *binfile);
 RZ_API RzBinDwarfDebugInfo *rz_bin_dwarf_parse_info(RzBinFile *binfile, RzBinDwarfDebugAbbrev *da);
 RZ_API HtUP /*<offset, RzBinDwarfLocList*/ *rz_bin_dwarf_parse_loc(RzBinFile *binfile, int addr_size);
@@ -880,6 +890,7 @@ RZ_API void rz_bin_dwarf_arange_set_free(RzBinDwarfARangeSet *set);
 RZ_API void rz_bin_dwarf_loc_free(HtUP /*<offset, RzBinDwarfLocList*>*/ *loc_table);
 RZ_API void rz_bin_dwarf_debug_info_free(RzBinDwarfDebugInfo *inf);
 RZ_API void rz_bin_dwarf_debug_abbrev_free(RzBinDwarfDebugAbbrev *da);
+RZ_API void rz_bin_dwarf_line_info_free(RzBinDwarfLineInfo *li);
 
 #ifdef __cplusplus
 }

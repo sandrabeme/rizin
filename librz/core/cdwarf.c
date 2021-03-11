@@ -237,3 +237,34 @@ RZ_API void rz_core_bin_dwarf_print_aranges(RzList /*<RzBinDwarfARangeSet>*/ *ar
 	}
 	rz_cons_print("\n");
 }
+
+RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines) {
+	rz_return_if_fail(lines);
+	rz_cons_print("Raw dump of debug contents of section .debug_line:\n\n");
+	RzListIter *it;
+	RzBinDwarfLineInfo *li;
+	rz_list_foreach (lines, it, li) {
+		rz_cons_print(" Header information:\n");
+		rz_cons_printf("  Length:                             %" PFMT64u "\n", li->header.unit_length);
+		rz_cons_printf("  DWARF Version:                      %d\n", li->header.version);
+		rz_cons_printf("  Header Length:                      %" PFMT64d "\n", li->header.header_length);
+		rz_cons_printf("  Minimum Instruction Length:         %d\n", li->header.min_inst_len);
+		rz_cons_printf("  Maximum Operations per Instruction: %d\n", li->header.max_ops_per_inst);
+		rz_cons_printf("  Initial value of 'is_stmt':         %d\n", li->header.default_is_stmt);
+		rz_cons_printf("  Line Base:                          %d\n", li->header.line_base);
+		rz_cons_printf("  Line Range:                         %d\n", li->header.line_range);
+		rz_cons_printf("  Opcode Base:                        %d\n\n", li->header.opcode_base);
+		rz_cons_print(" Opcodes:\n");
+		for (size_t i = 0; i < li->header.opcode_base; i++) {
+			rz_cons_printf("  Opcode %zu has %d arg\n", i, li->header.std_opcode_lengths[i]);
+		}
+		rz_cons_print("\n");
+		if (li->header.include_dirs_count && li->header.include_dirs) {
+			rz_cons_printf(" The Directory Table:\n");
+			for (size_t i = 0; i < li->header.include_dirs_count; i++) {
+				rz_cons_printf("  %u     %s\n", (unsigned int)i + 1, li->header.include_dirs[i]);
+			}
+		}
+	}
+	rz_cons_print("\n");
+}

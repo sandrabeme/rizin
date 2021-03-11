@@ -1192,7 +1192,12 @@ static bool bin_dwarf(RzCore *core, RzBinFile *binfile, PJ *pj, int mode) {
 				rz_list_free(aranges);
 			}
 		}
-		list = ownlist = rz_bin_dwarf_parse_line(binfile, mode);
+		RzList *lines;
+		list = ownlist = rz_bin_dwarf_parse_line(binfile, mode, &lines);
+		if (lines && mode == RZ_MODE_PRINT) {
+			rz_core_bin_dwarf_print_lines(lines);
+			rz_list_free(lines);
+		}
 		rz_bin_dwarf_debug_abbrev_free(da);
 	}
 	if (!list) {

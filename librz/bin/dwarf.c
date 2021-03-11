@@ -437,13 +437,6 @@ static inline ut64 dwarf_read_address(size_t size, bool big_endian, const ut8 **
 	return result;
 }
 
-static int add_sdb_include_dir(Sdb *s, const char *incl, int idx) {
-	if (!s || !incl) {
-		return false;
-	}
-	return sdb_array_set(s, "includedirs", idx, incl, 0);
-}
-
 static void line_header_fini(RzBinDwarfLineHeader *hdr) {
 	if (hdr) {
 		size_t i;
@@ -459,14 +452,18 @@ static void line_header_fini(RzBinDwarfLineHeader *hdr) {
 
 // Parses source file header of DWARF version <= 4
 static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const ut8 *buf_end,
-	RzBinDwarfLineHeader *hdr, Sdb *sdb, int mode, PrintfCallback print) {
-	int i = 0;
+	RzBinDwarfLineHeader *hdr, int mode, PrintfCallback print) {
 	size_t count;
 	const ut8 *tmp_buf = NULL;
 
-	if (mode == RZ_MODE_PRINT) {
-		print(" The Directory Table:\n");
+	// TODO: kill this sdb with fire
+	Sdb *sdb = sdb_new(NULL, NULL, 0);
+	if (!sdb) {
+		return NULL;
 	}
+
+	RzPVector incdirs;
+	rz_pvector_init(&incdirs, free);
 	while (buf + 1 < buf_end) {
 		size_t maxlen = RZ_MIN((size_t)(buf_end - buf) - 1, 0xfff);
 		size_t len = rz_str_nlen((const char *)buf, maxlen);
@@ -476,14 +473,12 @@ static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const 
 			free(str);
 			break;
 		}
-		if (mode == RZ_MODE_PRINT) {
-			print("  %d     %s\n", i + 1, str);
-		}
-		add_sdb_include_dir(sdb, str, i);
-		free(str);
-		i++;
+		rz_pvector_push(&incdirs, str);
 		buf += len + 1;
 	}
+	hdr->include_dirs_count = rz_pvector_len(&incdirs);
+	hdr->include_dirs = (char **)rz_pvector_flush(&incdirs);
+	rz_pvector_fini(&incdirs);
 
 	tmp_buf = buf;
 	count = 0;
@@ -494,7 +489,7 @@ static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const 
 	}
 	int entry_index = 1; // used for printing information
 
-	for (i = 0; i < 2; i++) {
+	for (int i = 0; i < 2; i++) {
 		while (buf + 1 < buf_end) {
 			const char *filename = (const char *)buf;
 			size_t maxlen = RZ_MIN((size_t)(buf_end - buf - 1), 0xfff);
@@ -528,8 +523,8 @@ static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const 
 
 			if (i) {
 				char *include_dir = NULL, *comp_dir = NULL, *pinclude_dir = NULL;
-				if (id_idx > 0) {
-					include_dir = pinclude_dir = sdb_array_get(sdb, "includedirs", id_idx - 1, 0);
+				if (id_idx > 0 && id_idx - 1 < hdr->include_dirs_count) {
+					include_dir = pinclude_dir = hdr->include_dirs[id_idx - 1];;
 					if (include_dir && include_dir[0] != '/') {
 						comp_dir = sdb_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
 						if (comp_dir) {
@@ -562,7 +557,7 @@ static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const 
 		}
 		if (i == 0) {
 			if (count > 0) {
-				hdr->file_names = calloc(sizeof(file_entry), count);
+				hdr->file_names = calloc(sizeof(RzBinDwarfLineFileEntry), count);
 			} else {
 				hdr->file_names = NULL;
 			}
@@ -615,37 +610,16 @@ static const ut8 *parse_line_header(
 
 	hdr->file_names = NULL;
 
-	if (mode == RZ_MODE_PRINT) {
-		print(" Header information:\n");
-		print("  Length:                             %" PFMT64u "\n", hdr->unit_length);
-		print("  DWARF Version:                      %d\n", hdr->version);
-		print("  Header Length:                      %" PFMT64d "\n", hdr->header_length);
-		print("  Minimum Instruction Length:         %d\n", hdr->min_inst_len);
-		print("  Maximum Operations per Instruction: %d\n", hdr->max_ops_per_inst);
-		print("  Initial value of 'is_stmt':         %d\n", hdr->default_is_stmt);
-		print("  Line Base:                          %d\n", hdr->line_base);
-		print("  Line Range:                         %d\n", hdr->line_range);
-		print("  Opcode Base:                        %d\n\n", hdr->opcode_base);
-	}
-
 	if (hdr->opcode_base > 0) {
 		hdr->std_opcode_lengths = calloc(sizeof(ut8), hdr->opcode_base);
-
-		if (mode == RZ_MODE_PRINT) {
-			print(" Opcodes:\n");
-		}
 		size_t i;
+		// TODO: wtf why i=1?
 		for (i = 1; i < hdr->opcode_base; i++) {
 			if (buf + 2 > buf_end) {
+				hdr->opcode_base = i;
 				break;
 			}
 			hdr->std_opcode_lengths[i] = READ8(buf);
-			if (mode == RZ_MODE_PRINT) {
-				print("  Opcode %zu has %d arg\n", i, hdr->std_opcode_lengths[i]);
-			}
-		}
-		if (mode == RZ_MODE_PRINT) {
-			print("\n");
 		}
 	} else {
 		hdr->std_opcode_lengths = NULL;
@@ -657,13 +631,8 @@ static const ut8 *parse_line_header(
 		return tmp_buf;
 	}
 
-	Sdb *sdb = sdb_new(NULL, NULL, 0);
-	if (!sdb) {
-		return NULL;
-	}
-
 	if (hdr->version <= 4) {
-		buf = parse_line_header_source(bf, buf, buf_end, hdr, sdb, mode, print);
+		buf = parse_line_header_source(bf, buf, buf_end, hdr, mode, print);
 	} else {
 		buf = NULL;
 	}
@@ -1026,22 +995,25 @@ static size_t parse_opcodes(const RzBin *bin, const ut8 *obuf,
 	return (size_t)(buf - obuf); // number of bytes we've moved by
 }
 
-static int parse_line_raw(RzBinFile *binfile, const ut8 *obuf,
+static RzList /*<RzBinDwarfLineInfo>*/ *parse_line_raw(RzBinFile *binfile, const ut8 *obuf,
 	ut64 len, int mode, bool big_endian) {
+	// Dwarf 3 Standard 6.2 Line Number Information
 	rz_return_val_if_fail(binfile && obuf, false);
 	PrintfCallback print = binfile->rbin->cb_printf;
 
-	if (mode == RZ_MODE_PRINT) {
-		print("Raw dump of debug contents of section .debug_line:\n\n");
-	}
 	const ut8 *buf = obuf;
 	const ut8 *buf_end = obuf + len;
 	const ut8 *tmpbuf = NULL;
 	ut64 buf_size;
 
+	RzList *r = rz_list_newf((RzListFree)rz_bin_dwarf_line_info_free);
+
 	// each iteration we read one header AKA comp. unit
 	while (buf <= buf_end) {
-		RzBinDwarfLineHeader hdr = { 0 };
+		RzBinDwarfLineInfo *li = RZ_NEW0(RzBinDwarfLineInfo);
+		if (!li) {
+			break;
+		}
 
 		// How much did we read from the compilation unit
 		size_t bytes_read = 0;
@@ -1050,10 +1022,10 @@ static int parse_line_raw(RzBinFile *binfile, const ut8 *obuf,
 		buf_size = buf_end - buf;
 
 		tmpbuf = buf;
-		buf = parse_line_header(binfile, buf, buf_end, &hdr, mode, print, big_endian);
+		buf = parse_line_header(binfile, buf, buf_end, &li->header, mode, print, big_endian);
 		if (!buf) {
-			line_header_fini(&hdr);
-			return false;
+			rz_bin_dwarf_line_info_free(li);
+			break;
 		}
 
 		if (mode == RZ_MODE_PRINT) {
@@ -1062,12 +1034,12 @@ static int parse_line_raw(RzBinFile *binfile, const ut8 *obuf,
 		bytes_read = buf - tmpbuf;
 
 		RzBinDwarfSMRegisters regs;
-		set_regs_default(&hdr, &regs);
+		set_regs_default(&li->header, &regs);
 
 		// If there is more bytes in the buffer than size of the header
 		// It means that there has to be another header/comp.unit
-		if (buf_size > hdr.unit_length) {
-			buf_size = hdr.unit_length + (hdr.is_64bit * 8 + 4); // we dif against bytes_read, but
+		if (buf_size > li->header.unit_length) {
+			buf_size = li->header.unit_length + (li->header.is_64bit * 8 + 4); // we dif against bytes_read, but
 				// unit_length doesn't account unit_length field
 		}
 		// this deals with a case that there is compilation unit with any line information
@@ -1075,28 +1047,30 @@ static int parse_line_raw(RzBinFile *binfile, const ut8 *obuf,
 			if (mode == RZ_MODE_PRINT) {
 				print(" Line table is present, but no lines present\n");
 			}
-			line_header_fini(&hdr);
+			// TODO: should we output this too?
+			rz_bin_dwarf_line_info_free(li);
 			continue;
 		}
 		if (buf_size > (buf_end - buf) + bytes_read || buf > buf_end) {
-			line_header_fini(&hdr);
-			return false;
+			rz_bin_dwarf_line_info_free(li);
+			break;
 		}
 		size_t tmp_read = 0;
 		// we read the whole compilation unit (that might be composed of more sequences)
 		do {
 			// reads one whole sequence
-			tmp_read = parse_opcodes(binfile->rbin, buf, buf_end - buf, &hdr, &regs, mode, big_endian);
+			tmp_read = parse_opcodes(binfile->rbin, buf, buf_end - buf, &li->header, &regs, mode, big_endian);
 			bytes_read += tmp_read;
 			buf += tmp_read; // Move in the buffer forward
 		} while (bytes_read < buf_size && tmp_read != 0); // if nothing is read -> error, exit
 
-		line_header_fini(&hdr);
 		if (!tmp_read) {
-			return false;
+			rz_bin_dwarf_line_info_free(li);
+			break;
 		}
+		rz_list_push(r, li);
 	}
-	return true;
+	return r;
 }
 
 RZ_API void rz_bin_dwarf_arange_set_free(RzBinDwarfARangeSet *set) {
@@ -1327,6 +1301,14 @@ RZ_API void rz_bin_dwarf_debug_abbrev_free(RzBinDwarfDebugAbbrev *da) {
 	}
 	RZ_FREE(da->decls);
 	free(da);
+}
+
+RZ_API void rz_bin_dwarf_line_info_free(RzBinDwarfLineInfo *li) {
+	if (!li) {
+		return;
+	}
+	line_header_fini(&li->header);
+	free(li);
 }
 
 static void free_attr_value(RzBinDwarfAttrValue *val) {
@@ -2107,64 +2089,68 @@ static void row_free(void *p) {
 	free(row);
 }
 
-RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode) {
+RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result) {
 	rz_return_val_if_fail(binfile, NULL);
 	ut8 *buf;
 	RzList *list = NULL;
-	int len, ret;
+	int ret;
 	RzBinSection *section = getsection(binfile, "debug_line");
-	if (binfile && section) {
-		len = section->size;
-		if (len < 1) {
-			return NULL;
-		}
-		buf = calloc(1, len + 1);
-		if (!buf) {
-			return NULL;
-		}
-		ret = rz_buf_read_at(binfile->buf, section->paddr, buf, len);
-		if (ret != len) {
-			free(buf);
-			return NULL;
-		}
-		list = rz_list_newf(row_free);
-		if (!list) {
-			free(buf);
-			return NULL;
-		}
-		// Actually parse the section
-		parse_line_raw(binfile, buf, len, mode, binfile->o && binfile->o->info && binfile->o->info->big_endian);
-		// k bin/cur/addrinfo/*
-		SdbListIter *iter;
-		SdbKv *kv;
-		SdbList *ls = sdb_foreach_list(binfile->sdb_addrinfo, false);
-		// Use the parsed information from _raw and transform it to more useful format
-		ls_foreach (ls, iter, kv) {
-			if (!strncmp(sdbkv_key(kv), "0x", 2)) {
-				ut64 addr;
-				RzBinDwarfRow *row;
-				int line;
-				char *file = strdup(sdbkv_value(kv));
-				if (!file) {
-					free(buf);
-					ls_free(ls);
-					rz_list_free(list);
-					return NULL;
-				}
-				char *tok = strchr(file, '|');
-				if (tok) {
-					*tok++ = 0;
-					line = atoi(tok);
-					addr = rz_num_math(NULL, sdbkv_key(kv));
-					row = row_new(addr, file, line, 0);
-					rz_list_append(list, row);
-				}
-				free(file);
-			}
-		}
-		ls_free(ls);
-		free(buf);
+	if (!section) {
+		return NULL;
 	}
+	ut64 len = section->size;
+	if (len < 1) {
+		return NULL;
+	}
+	buf = calloc(1, len + 1);
+	if (!buf) {
+		return NULL;
+	}
+	ret = rz_buf_read_at(binfile->buf, section->paddr, buf, len);
+	if (ret != len) {
+		free(buf);
+		return NULL;
+	}
+	list = rz_list_newf(row_free);
+	if (!list) {
+		free(buf);
+		return NULL;
+	}
+	// Actually parse the section
+	RzList *lines = parse_line_raw(binfile, buf, len, mode, binfile->o && binfile->o->info && binfile->o->info->big_endian);
+	if (the_actual_result) {
+		*the_actual_result = lines;
+	}
+	// k bin/cur/addrinfo/*
+	SdbListIter *iter;
+	SdbKv *kv;
+	SdbList *ls = sdb_foreach_list(binfile->sdb_addrinfo, false);
+	// Use the parsed information from _raw and transform it to more useful format
+	ls_foreach (ls, iter, kv) {
+		if (!strncmp(sdbkv_key(kv), "0x", 2)) {
+			ut64 addr;
+			RzBinDwarfRow *row;
+			int line;
+			char *file = strdup(sdbkv_value(kv));
+			if (!file) {
+				free(buf);
+				ls_free(ls);
+				rz_list_free(list);
+				return NULL;
+			}
+			char *tok = strchr(file, '|');
+			if (tok) {
+				*tok++ = 0;
+				line = atoi(tok);
+				addr = rz_num_math(NULL, sdbkv_key(kv));
+				row = row_new(addr, file, line, 0);
+				rz_list_append(list, row);
+			}
+			free(file);
+		}
+	}
+	ls_free(ls);
+	free(buf);
 	return list;
 }
 
