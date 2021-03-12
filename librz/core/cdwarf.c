@@ -255,8 +255,8 @@ RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines
 		rz_cons_printf("  Line Range:                         %d\n", li->header.line_range);
 		rz_cons_printf("  Opcode Base:                        %d\n\n", li->header.opcode_base);
 		rz_cons_print(" Opcodes:\n");
-		for (size_t i = 0; i < li->header.opcode_base; i++) {
-			rz_cons_printf("  Opcode %zu has %d arg\n", i, li->header.std_opcode_lengths[i]);
+		for (size_t i = 1; i < li->header.opcode_base; i++) {
+			rz_cons_printf("  Opcode %zu has %d arg\n", i, li->header.std_opcode_lengths[i - 1]);
 		}
 		rz_cons_print("\n");
 		if (li->header.include_dirs_count && li->header.include_dirs) {
@@ -264,6 +264,17 @@ RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines
 			for (size_t i = 0; i < li->header.include_dirs_count; i++) {
 				rz_cons_printf("  %u     %s\n", (unsigned int)i + 1, li->header.include_dirs[i]);
 			}
+		}
+		if (li->header.file_names_count && li->header.file_names) {
+			rz_cons_print("\n");
+			rz_cons_print(" The File Name Table:\n");
+			rz_cons_print("  Entry Dir     Time      Size       Name\n");
+			for (size_t i = 0; i < li->header.file_names_count; i++) {
+				RzBinDwarfLineFileEntry *f = &li->header.file_names[i];
+				rz_cons_printf("  %u     %" PFMT32u "       %" PFMT32u "         %" PFMT32u "          %s\n",
+					(unsigned int)i, f->id_idx, f->mod_time, f->file_len, f->name);
+			}
+			rz_cons_print("\n");
 		}
 	}
 	rz_cons_print("\n");

@@ -452,15 +452,7 @@ static void line_header_fini(RzBinDwarfLineHeader *hdr) {
 
 // Parses source file header of DWARF version <= 4
 static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const ut8 *buf_end,
-	RzBinDwarfLineHeader *hdr, int mode, PrintfCallback print) {
-	size_t count;
-	const ut8 *tmp_buf = NULL;
-
-	// TODO: kill this sdb with fire
-	Sdb *sdb = sdb_new(NULL, NULL, 0);
-	if (!sdb) {
-		return NULL;
-	}
+	RzBinDwarfLineHeader *hdr) {
 
 	RzPVector incdirs;
 	rz_pvector_init(&incdirs, free);
@@ -480,100 +472,75 @@ static const ut8 *parse_line_header_source(RzBinFile *bf, const ut8 *buf, const 
 	hdr->include_dirs = (char **)rz_pvector_flush(&incdirs);
 	rz_pvector_fini(&incdirs);
 
-	tmp_buf = buf;
-	count = 0;
-	if (mode == RZ_MODE_PRINT) {
-		print("\n");
-		print(" The File Name Table:\n");
-		print("  Entry Dir     Time      Size       Name\n");
-	}
-	int entry_index = 1; // used for printing information
+	RzVector file_names;
+	rz_vector_init(&file_names, sizeof(RzBinDwarfLineFileEntry), NULL, NULL);
+	while (buf + 1 < buf_end) {
+		const char *filename = (const char *)buf;
+		size_t maxlen = RZ_MIN((size_t)(buf_end - buf - 1), 0xfff);
+		ut64 id_idx, mod_time, file_len;
+		size_t len = rz_str_nlen(filename, maxlen);
 
-	for (int i = 0; i < 2; i++) {
-		while (buf + 1 < buf_end) {
-			const char *filename = (const char *)buf;
-			size_t maxlen = RZ_MIN((size_t)(buf_end - buf - 1), 0xfff);
-			ut64 id_idx, mod_time, file_len;
-			size_t len = rz_str_nlen(filename, maxlen);
-
-			if (!len) {
-				buf++;
-				break;
-			}
-			buf += len + 1;
-			if (buf >= buf_end) {
-				buf = NULL;
-				goto beach;
-			}
-			buf = rz_uleb128(buf, buf_end - buf, &id_idx, NULL);
-			if (buf >= buf_end) {
-				buf = NULL;
-				goto beach;
-			}
-			buf = rz_uleb128(buf, buf_end - buf, &mod_time, NULL);
-			if (buf >= buf_end) {
-				buf = NULL;
-				goto beach;
-			}
-			buf = rz_uleb128(buf, buf_end - buf, &file_len, NULL);
-			if (buf >= buf_end) {
-				buf = NULL;
-				goto beach;
-			}
-
-			if (i) {
-				char *include_dir = NULL, *comp_dir = NULL, *pinclude_dir = NULL;
-				if (id_idx > 0 && id_idx - 1 < hdr->include_dirs_count) {
-					include_dir = pinclude_dir = hdr->include_dirs[id_idx - 1];;
-					if (include_dir && include_dir[0] != '/') {
-						comp_dir = sdb_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
-						if (comp_dir) {
-							include_dir = rz_str_newf("%s/%s/", comp_dir, include_dir);
-						}
-					}
-				} else {
-					include_dir = pinclude_dir = sdb_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
-					if (!include_dir) {
-						include_dir = "./";
-					}
-				}
-
-				if (hdr->file_names) {
-					hdr->file_names[count].name = rz_str_newf("%s/%s", include_dir ? include_dir : "", filename);
-					hdr->file_names[count].id_idx = id_idx;
-					hdr->file_names[count].mod_time = mod_time;
-					hdr->file_names[count].file_len = file_len;
-				}
-				if (comp_dir) {
-					RZ_FREE(include_dir);
-					RZ_FREE(comp_dir);
-				}
-				RZ_FREE(pinclude_dir);
-			}
-			count++;
-			if (mode == RZ_MODE_PRINT && i) {
-				print("  %d     %" PFMT64d "       %" PFMT64d "         %" PFMT64d "          %s\n", entry_index++, id_idx, mod_time, file_len, filename);
-			}
+		if (!len) {
+			buf++;
+			break;
 		}
-		if (i == 0) {
-			if (count > 0) {
-				hdr->file_names = calloc(sizeof(RzBinDwarfLineFileEntry), count);
-			} else {
-				hdr->file_names = NULL;
-			}
-			hdr->file_names_count = count;
-			buf = tmp_buf;
-			count = 0;
+		buf += len + 1;
+		if (buf >= buf_end) {
+			buf = NULL;
+			goto beach;
 		}
+		buf = rz_uleb128(buf, buf_end - buf, &id_idx, NULL);
+		if (buf >= buf_end) {
+			buf = NULL;
+			goto beach;
+		}
+		buf = rz_uleb128(buf, buf_end - buf, &mod_time, NULL);
+		if (buf >= buf_end) {
+			buf = NULL;
+			goto beach;
+		}
+		buf = rz_uleb128(buf, buf_end - buf, &file_len, NULL);
+		if (buf >= buf_end) {
+			buf = NULL;
+			goto beach;
+		}
+		RzBinDwarfLineFileEntry *entry = rz_vector_push(&file_names, NULL);
+		entry->name = strdup(filename);
+		entry->id_idx = id_idx;
+		entry->mod_time = mod_time;
+		entry->file_len = file_len;
 	}
-	if (mode == RZ_MODE_PRINT) {
-		print("\n");
-	}
+	hdr->file_names_count = rz_vector_len(&file_names);
+	hdr->file_names = rz_vector_flush(&file_names);
+	rz_vector_fini(&file_names);
 
 beach:
-	sdb_free(sdb);
-
 	return buf;
+}
+
+RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(const RzBinFile *bf, const RzBinDwarfLineHeader *header,
+	const RzBinDwarfLineFileEntry *file) {
+	rz_return_val_if_fail(header && file, NULL);
+	const char *include_dir = NULL, *comp_dir = NULL;
+	if (file->id_idx > 0 && file->id_idx - 1 < header->include_dirs_count) {
+		include_dir = header->include_dirs[file->id_idx - 1];
+		if (include_dir && include_dir[0] != '/') {
+			comp_dir = sdb_const_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
+			if (comp_dir) {
+				include_dir = rz_str_newf("%s/%s/", comp_dir, include_dir);
+			}
+		}
+	} else {
+		include_dir = sdb_const_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
+		if (!include_dir) {
+			include_dir = "./";
+		}
+	}
+	char *r = rz_str_newf("%s/%s", include_dir, file->name);
+	if (comp_dir) {
+		RZ_FREE(include_dir);
+	}
+	return r;
 }
 
 static const ut8 *parse_line_header(
@@ -611,15 +578,13 @@ static const ut8 *parse_line_header(
 	hdr->file_names = NULL;
 
 	if (hdr->opcode_base > 0) {
-		hdr->std_opcode_lengths = calloc(sizeof(ut8), hdr->opcode_base);
-		size_t i;
-		// TODO: wtf why i=1?
-		for (i = 1; i < hdr->opcode_base; i++) {
+		hdr->std_opcode_lengths = calloc(sizeof(ut8), hdr->opcode_base - 1);
+		for (size_t i = 1; i < hdr->opcode_base; i++) {
 			if (buf + 2 > buf_end) {
 				hdr->opcode_base = i;
 				break;
 			}
-			hdr->std_opcode_lengths[i] = READ8(buf);
+			hdr->std_opcode_lengths[i - 1] = READ8(buf);
 		}
 	} else {
 		hdr->std_opcode_lengths = NULL;
@@ -632,7 +597,7 @@ static const ut8 *parse_line_header(
 	}
 
 	if (hdr->version <= 4) {
-		buf = parse_line_header_source(bf, buf, buf_end, hdr, mode, print);
+		buf = parse_line_header_source(bf, buf, buf_end, hdr);
 	} else {
 		buf = NULL;
 	}
@@ -715,8 +680,10 @@ static const ut8 *parse_ext_opcode(const RzBin *bin, const ut8 *obuf,
 		if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
 			int fnidx = regs->file - 1;
 			if (fnidx >= 0 && fnidx < hdr->file_names_count) {
+				char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile, hdr, &hdr->file_names[fnidx]);
 				add_sdb_addrline(binfile->sdb_addrinfo, regs->address,
-					hdr->file_names[fnidx].name, regs->line, mode, print);
+					full_file, regs->line, mode, print);
+				free(full_file);
 			}
 		}
 
@@ -805,9 +772,10 @@ static const ut8 *parse_spec_opcode(
 	if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
 		int idx = regs->file - 1;
 		if (idx >= 0 && idx < hdr->file_names_count) {
+			char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile, hdr, &hdr->file_names[idx]);
 			add_sdb_addrline(binfile->sdb_addrinfo, regs->address,
-				hdr->file_names[idx].name,
-				regs->line, mode, print);
+				full_file, regs->line, mode, print);
+			free(full_file);
 		}
 	}
 	regs->basic_block = DWARF_FALSE;
@@ -846,10 +814,10 @@ static const ut8 *parse_std_opcode(
 		if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
 			int fnidx = regs->file - 1;
 			if (fnidx >= 0 && fnidx < hdr->file_names_count) {
+				char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile, hdr, &hdr->file_names[fnidx]);
 				add_sdb_addrline(binfile->sdb_addrinfo,
-					regs->address,
-					hdr->file_names[fnidx].name,
-					regs->line, mode, print);
+					regs->address, full_file, regs->line, mode, print);
+				free(full_file);
 			}
 		}
 		regs->basic_block = DWARF_FALSE;

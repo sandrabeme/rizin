@@ -809,6 +809,7 @@ typedef struct {
 } RzBinDwarfSMRegisters;
 
 typedef struct rz_bin_dwarf_line_file_entry_t {
+	char *include_dir;
 	char *name;
 	ut32 id_idx, mod_time, file_len;
 } RzBinDwarfLineFileEntry;
@@ -827,13 +828,20 @@ typedef struct {
 	ut8 segment_selector_size;
 	bool is_64bit;
 
-	ut8 *std_opcode_lengths; //< count is opcode_base
+	/**
+	 * \brief The number of LEB128 operands for each of the standard opcodes
+	 * From standard_opcode_lengths in DWARF 3 standard:
+	 * The first element of the array corresponds to the opcode whose value is 1,
+	 * and the last element corresponds to the opcode whose value is opcode_base - 1.
+	 * Thus, the size of this array is opcode_base - 1.
+	 */
+	ut8 *std_opcode_lengths;
+
 	char **include_dirs;
 	size_t include_dirs_count;
 	RzBinDwarfLineFileEntry *file_names;
 	size_t file_names_count;
 } RzBinDwarfLineHeader;
-
 
 /**
  * \brief DWARF 3 Standard Section 6.2 Line Number Information 
@@ -883,6 +891,8 @@ RZ_API const char *rz_bin_dwarf_get_lang_name(ut64 lang);
 
 RZ_API RzList /*<RzBinDwarfARangeSet>*/ *rz_bin_dwarf_parse_aranges(RzBinFile *binfile);
 RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result);
+RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(const RzBinFile *bf, const RzBinDwarfLineHeader *header,
+	const RzBinDwarfLineFileEntry *file);
 RZ_API RzBinDwarfDebugAbbrev *rz_bin_dwarf_parse_abbrev(RzBinFile *binfile);
 RZ_API RzBinDwarfDebugInfo *rz_bin_dwarf_parse_info(RzBinFile *binfile, RzBinDwarfDebugAbbrev *da);
 RZ_API HtUP /*<offset, RzBinDwarfLocList*/ *rz_bin_dwarf_parse_loc(RzBinFile *binfile, int addr_size);
