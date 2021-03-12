@@ -849,7 +849,16 @@ typedef struct {
  */
 typedef struct {
 	RzBinDwarfLineHeader header;
+
+	size_t rows_count;
+	RzBinDwarfRow *rows;
 } RzBinDwarfLineInfo;
+
+typedef enum {
+	RZ_BIN_DWARF_LINE_INFO_MASK_BASIC   = 0x0, //< parse just the headers
+	RZ_BIN_DWARF_LINE_INFO_PROGRAM_OPS  = 0x1,
+	RZ_BIN_DWARF_LINE_INFO_ROWS         = 0x2
+} RzBinDwarfLineInfoMask;
 
 typedef struct rz_bin_dwarf_loc_entry_t {
 	ut64 start;
