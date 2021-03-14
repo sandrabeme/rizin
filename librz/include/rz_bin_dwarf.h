@@ -843,6 +843,19 @@ typedef struct {
 	size_t file_names_count;
 } RzBinDwarfLineHeader;
 
+typedef enum {
+	RZ_BIN_DWARF_LINE_OP_TYPE_STD,
+	RZ_BIN_DWARF_LINE_OP_TYPE_EXT,
+	RZ_BIN_DWARF_LINE_OP_TYPE_SPEC
+} RzBinDwarfLineOpType;
+
+typedef struct {
+	RzBinDwarfLineOpType type;
+	ut8 opcode;
+	union {
+	};
+} RzBinDwarfLineOp;
+
 /**
  * \brief DWARF 3 Standard Section 6.2 Line Number Information 
  * This contains the entire line info for one compilation unit.
@@ -850,14 +863,17 @@ typedef struct {
 typedef struct {
 	RzBinDwarfLineHeader header;
 
+	size_t ops_count;
+	RzBinDwarfLineOp *ops;
+
 	size_t rows_count;
 	RzBinDwarfRow *rows;
 } RzBinDwarfLineInfo;
 
 typedef enum {
-	RZ_BIN_DWARF_LINE_INFO_MASK_BASIC   = 0x0, //< parse just the headers
-	RZ_BIN_DWARF_LINE_INFO_PROGRAM_OPS  = 0x1,
-	RZ_BIN_DWARF_LINE_INFO_ROWS         = 0x2
+	RZ_BIN_DWARF_LINE_INFO_MASK_BASIC = 0x0, //< parse just the headers
+	RZ_BIN_DWARF_LINE_INFO_MASK_OPS   = 0x1, //< decode and output all instructions
+	RZ_BIN_DWARF_LINE_INFO_MASK_ROWS  = 0x2  //< run instructions and ouput the resulting line infos
 } RzBinDwarfLineInfoMask;
 
 typedef struct rz_bin_dwarf_loc_entry_t {
@@ -900,7 +916,7 @@ RZ_API const char *rz_bin_dwarf_get_lang_name(ut64 lang);
 
 RZ_API RzList /*<RzBinDwarfARangeSet>*/ *rz_bin_dwarf_parse_aranges(RzBinFile *binfile);
 RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result);
-RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(const RzBinFile *bf, const RzBinDwarfLineHeader *header,
+RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, const RzBinDwarfLineHeader *header,
 	const RzBinDwarfLineFileEntry *file);
 RZ_API RzBinDwarfDebugAbbrev *rz_bin_dwarf_parse_abbrev(RzBinFile *binfile);
 RZ_API RzBinDwarfDebugInfo *rz_bin_dwarf_parse_info(RzBinFile *binfile, RzBinDwarfDebugAbbrev *da);

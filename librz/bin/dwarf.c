@@ -518,20 +518,20 @@ beach:
 	return buf;
 }
 
-RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(const RzBinFile *bf, const RzBinDwarfLineHeader *header,
+RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, const RzBinDwarfLineHeader *header,
 	const RzBinDwarfLineFileEntry *file) {
 	rz_return_val_if_fail(header && file, NULL);
 	const char *include_dir = NULL, *comp_dir = NULL;
 	if (file->id_idx > 0 && file->id_idx - 1 < header->include_dirs_count) {
 		include_dir = header->include_dirs[file->id_idx - 1];
 		if (include_dir && include_dir[0] != '/') {
-			comp_dir = sdb_const_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
+			comp_dir = sdb_const_get(sdb_addrinfo, "DW_AT_comp_dir", 0);
 			if (comp_dir) {
 				include_dir = rz_str_newf("%s/%s/", comp_dir, include_dir);
 			}
 		}
 	} else {
-		include_dir = sdb_const_get(bf->sdb_addrinfo, "DW_AT_comp_dir", 0);
+		include_dir = sdb_const_get(sdb_addrinfo, "DW_AT_comp_dir", 0);
 		if (!include_dir) {
 			include_dir = "./";
 		}
@@ -605,7 +605,7 @@ static const ut8 *parse_line_header(
 	return buf;
 }
 
-static inline void add_sdb_addrline(Sdb *s, ut64 addr, const char *file, ut64 line, int mode, PrintfCallback print) {
+static inline void add_sdb_addrline(Sdb *s, ut64 addr, const char *file, ut64 line) {
 	const char *p;
 	char *fileline;
 	char offset[64];
@@ -621,6 +621,7 @@ static inline void add_sdb_addrline(Sdb *s, ut64 addr, const char *file, ut64 li
 		p = file;
 	}
 	// includedirs and properly check full paths
+#if 0
 	switch (mode) {
 	case 1:
 	case 'r':
@@ -628,6 +629,7 @@ static inline void add_sdb_addrline(Sdb *s, ut64 addr, const char *file, ut64 li
 		print("CL %s:%d 0x%08" PFMT64x "\n", p, (int)line, addr);
 		break;
 	}
+#endif
 #if 0
 	/* THIS IS TOO SLOW */
 	if (rz_file_exists (file)) {
@@ -680,9 +682,9 @@ static const ut8 *parse_ext_opcode(const RzBin *bin, const ut8 *obuf,
 		if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
 			int fnidx = regs->file - 1;
 			if (fnidx >= 0 && fnidx < hdr->file_names_count) {
-				char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile, hdr, &hdr->file_names[fnidx]);
-				add_sdb_addrline(binfile->sdb_addrinfo, regs->address,
-					full_file, regs->line, mode, print);
+				char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile->sdb_addrinfo,
+					hdr, &hdr->file_names[fnidx]);
+				add_sdb_addrline(binfile->sdb_addrinfo, regs->address, full_file, regs->line);
 				free(full_file);
 			}
 		}
@@ -772,9 +774,9 @@ static const ut8 *parse_spec_opcode(
 	if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
 		int idx = regs->file - 1;
 		if (idx >= 0 && idx < hdr->file_names_count) {
-			char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile, hdr, &hdr->file_names[idx]);
-			add_sdb_addrline(binfile->sdb_addrinfo, regs->address,
-				full_file, regs->line, mode, print);
+			char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile->sdb_addrinfo,
+				hdr, &hdr->file_names[idx]);
+			add_sdb_addrline(binfile->sdb_addrinfo, regs->address, full_file, regs->line);
 			free(full_file);
 		}
 	}
@@ -794,7 +796,6 @@ static const ut8 *parse_std_opcode(
 	rz_return_val_if_fail(bin && bin->cur && obuf && hdr && regs, NULL);
 
 	PrintfCallback print = bin->cb_printf;
-	RzBinFile *binfile = bin->cur;
 	const ut8 *buf = obuf;
 	const ut8 *buf_end = obuf + len;
 	ut64 addr = 0LL;
@@ -803,24 +804,8 @@ static const ut8 *parse_std_opcode(
 	ut64 op_advance;
 	ut16 operand;
 
-	if (mode == RZ_MODE_PRINT) {
-		print("  "); // formatting
-	}
 	switch (opcode) {
 	case DW_LNS_copy:
-		if (mode == RZ_MODE_PRINT) {
-			print("Copy\n");
-		}
-		if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
-			int fnidx = regs->file - 1;
-			if (fnidx >= 0 && fnidx < hdr->file_names_count) {
-				char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile, hdr, &hdr->file_names[fnidx]);
-				add_sdb_addrline(binfile->sdb_addrinfo,
-					regs->address, full_file, regs->line, mode, print);
-				free(full_file);
-			}
-		}
-		regs->basic_block = DWARF_FALSE;
 		break;
 	case DW_LNS_advance_pc:
 		buf = rz_uleb128(buf, buf_end - buf, &addr, NULL);
@@ -924,6 +909,36 @@ static void set_regs_default(const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegist
 	regs->isa = 0;
 }
 
+RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hdr,
+		RzBinDwarfSMRegisters *regs, RzBinDwarfLineOp *op) {
+	switch (op->type) {
+	case RZ_BIN_DWARF_LINE_OP_TYPE_STD:
+		switch (op->opcode) {
+		case DW_LNS_copy: 
+			if (sdb_addrinfo && hdr->file_names) {
+				int fnidx = regs->file - 1;
+				if (fnidx >= 0 && fnidx < hdr->file_names_count) {
+					char *full_file = rz_bin_dwarf_line_header_get_full_file_path(sdb_addrinfo, hdr, &hdr->file_names[fnidx]);
+					add_sdb_addrline(sdb_addrinfo, regs->address, full_file, regs->line, mode, print);
+					free(full_file);
+				}
+			}
+			regs->basic_block = DWARF_FALSE;
+			break;
+		default:
+			return false;
+		}
+		break;
+	case RZ_BIN_DWARF_LINE_OP_TYPE_EXT:
+		break;
+	case RZ_BIN_DWARF_LINE_OP_TYPE_SPEC:
+		break;
+	default:
+		return false;
+	}
+	return true;
+}
+
 // Passing bin should be unnecessary (after we stop printing inside bin_dwarf)
 static size_t parse_opcodes(const RzBin *bin, const ut8 *obuf,
 	size_t len, const RzBinDwarfLineHeader *hdr,
@@ -953,9 +968,6 @@ static size_t parse_opcodes(const RzBin *bin, const ut8 *obuf,
 			buf = parse_std_opcode(bin, buf, len, hdr, regs, opcode, mode, big_endian);
 		}
 		len = (size_t)(buf_end - buf);
-	}
-	if (mode == RZ_MODE_PRINT) {
-		bin->cb_printf("\n"); // formatting of the output
 	}
 	if (!buf) {
 		return 0;
@@ -996,9 +1008,6 @@ static RzList /*<RzBinDwarfLineInfo>*/ *parse_line_raw(RzBinFile *binfile, const
 			break;
 		}
 
-		if (mode == RZ_MODE_PRINT) {
-			print(" Line Number Statements:\n");
-		}
 		bytes_read = buf - tmpbuf;
 
 		RzBinDwarfSMRegisters regs;
@@ -1012,9 +1021,6 @@ static RzList /*<RzBinDwarfLineInfo>*/ *parse_line_raw(RzBinFile *binfile, const
 		}
 		// this deals with a case that there is compilation unit with any line information
 		if (buf_size == bytes_read) {
-			if (mode == RZ_MODE_PRINT) {
-				print(" Line table is present, but no lines present\n");
-			}
 			// TODO: should we output this too?
 			rz_bin_dwarf_line_info_free(li);
 			continue;

@@ -238,6 +238,25 @@ RZ_API void rz_core_bin_dwarf_print_aranges(RzList /*<RzBinDwarfARangeSet>*/ *ar
 	rz_cons_print("\n");
 }
 
+static void print_line_op(RzBinDwarfLineOp *op) {
+	switch (op->type) {
+	case RZ_BIN_DWARF_LINE_OP_TYPE_STD:
+		switch (op->opcode) {
+		case DW_LNS_copy: 
+			rz_cons_print("Copy\n");
+			break;
+		default:
+			rz_cons_printf("Unknown Standard Opcode %u\n", (unsigned int)op->opcode);
+			break;
+		}
+		break;
+	case RZ_BIN_DWARF_LINE_OP_TYPE_EXT:
+		break;
+	case RZ_BIN_DWARF_LINE_OP_TYPE_SPEC:
+		break;
+	}
+}
+
 RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines) {
 	rz_return_if_fail(lines);
 	rz_cons_print("Raw dump of debug contents of section .debug_line:\n\n");
@@ -273,6 +292,14 @@ RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines
 				RzBinDwarfLineFileEntry *f = &li->header.file_names[i];
 				rz_cons_printf("  %u     %" PFMT32u "       %" PFMT32u "         %" PFMT32u "          %s\n",
 					(unsigned int)i, f->id_idx, f->mod_time, f->file_len, f->name);
+			}
+			rz_cons_print("\n");
+		}
+		if (li->ops_count && li->ops) {
+			rz_cons_print(" Line Number Statements:\n");
+			for (size_t i = 0; i < li->ops_count; i++) {
+				rz_cons_print("  ");
+				print_line_op(&li->ops[i]);
 			}
 			rz_cons_print("\n");
 		}
