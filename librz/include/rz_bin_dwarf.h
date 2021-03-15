@@ -844,16 +844,19 @@ typedef struct {
 } RzBinDwarfLineHeader;
 
 typedef enum {
-	RZ_BIN_DWARF_LINE_OP_TYPE_STD,
-	RZ_BIN_DWARF_LINE_OP_TYPE_EXT,
-	RZ_BIN_DWARF_LINE_OP_TYPE_SPEC
+	RZ_BIN_DWARF_LINE_OP_TYPE_SPEC, //< single byte op, no args
+	RZ_BIN_DWARF_LINE_OP_TYPE_STD, //< fixed-size op, 0 or more leb128 args (except DW_LNS_fixed_advance_pc)
+	RZ_BIN_DWARF_LINE_OP_TYPE_EXT //< variable-size op, arbitrary format of args
 } RzBinDwarfLineOpType;
+
+#define RZ_BIN_DWARF_LINE_OP_STD_ARGS_MAX 1
 
 typedef struct {
 	RzBinDwarfLineOpType type;
 	ut8 opcode;
 	union {
-	};
+		ut64 std_args[RZ_BIN_DWARF_LINE_OP_ARGS_MAX]; //< for type == RZ_BIN_DWARF_LINE_OP_TYPE_STD
+	}
 } RzBinDwarfLineOp;
 
 /**

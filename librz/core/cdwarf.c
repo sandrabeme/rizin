@@ -242,7 +242,7 @@ static void print_line_op(RzBinDwarfLineOp *op) {
 	switch (op->type) {
 	case RZ_BIN_DWARF_LINE_OP_TYPE_STD:
 		switch (op->opcode) {
-		case DW_LNS_copy: 
+		case DW_LNS_copy:
 			rz_cons_print("Copy\n");
 			break;
 		default:

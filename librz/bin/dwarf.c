@@ -577,7 +577,7 @@ static const ut8 *parse_line_header(
 
 	hdr->file_names = NULL;
 
-	if (hdr->opcode_base > 0) {
+	if (hdr->opcode_base > 1) {
 		hdr->std_opcode_lengths = calloc(sizeof(ut8), hdr->opcode_base - 1);
 		for (size_t i = 1; i < hdr->opcode_base; i++) {
 			if (buf + 2 > buf_end) {
@@ -604,6 +604,17 @@ static const ut8 *parse_line_header(
 
 	return buf;
 }
+
+typedef struct {
+	RzBinDwarfLineHeader *header;
+
+	/**
+	 * if not null, all opcodes should be executed on regs
+	 * while parsing and the resulting line info filled into this sdb.
+	 */
+	RZ_NULLABLE Sdb *sdb_addrline;
+	RzBinDwarfSMRegisters regs;
+} LineParseOpCtx;
 
 static inline void add_sdb_addrline(Sdb *s, ut64 addr, const char *file, ut64 line) {
 	const char *p;
@@ -788,6 +799,36 @@ static const ut8 *parse_spec_opcode(
 	return buf;
 }
 
+/**
+ * \return the number of leb128 args the std opcode takes, EXCEPT for DW_LNS_fixed_advance_pc! (see Dwarf spec)
+ */
+static size_t std_opcode_args_count(const RzBinDwarfLineHeader *hdr, ut8 opcode) {
+	// known opcodes
+	switch (opcode) {
+	case DW_LNS_copy:
+	case DW_LNS_negate_stmt:
+	case DW_LNS_set_basic_block:
+	case DW_LNS_const_add_pc:
+	case DW_LNS_set_prologue_end:
+	case DW_LNS_set_epilogue_begin:
+		return 0;
+	case DW_LNS_advance_pc:
+	case DW_LNS_advance_line:
+	case DW_LNS_set_file:
+	case DW_LNS_set_column:
+	case DW_LNS_fixed_advance_pc: // special case!
+	case DW_LNS_set_isa:
+		return 1;
+	default:
+		break;
+	}
+	// unknown opcode, take from the given sizes if possible
+	if (!opcode || opcode > hdr->opcode_base - 1 || !hdr->std_opcode_lengths) {
+		return 0;
+	}
+	return hdr->std_opcode_lengths[opcode - 1];
+}
+
 static const ut8 *parse_std_opcode(
 	const RzBin *bin, const ut8 *obuf, size_t len,
 	const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs,
@@ -795,7 +836,6 @@ static const ut8 *parse_std_opcode(
 
 	rz_return_val_if_fail(bin && bin->cur && obuf && hdr && regs, NULL);
 
-	PrintfCallback print = bin->cb_printf;
 	const ut8 *buf = obuf;
 	const ut8 *buf_end = obuf + len;
 	ut64 addr = 0LL;
@@ -804,8 +844,13 @@ static const ut8 *parse_std_opcode(
 	ut64 op_advance;
 	ut16 operand;
 
+	size_t args_count = std_opcode_args_count(hdr, opcode);
+
+
+#if 0
 	switch (opcode) {
 	case DW_LNS_copy:
+		// done
 		break;
 	case DW_LNS_advance_pc:
 		buf = rz_uleb128(buf, buf_end - buf, &addr, NULL);
@@ -893,6 +938,7 @@ static const ut8 *parse_std_opcode(
 		}
 		break;
 	}
+#endif
 	return buf;
 }
 
@@ -914,12 +960,12 @@ RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hd
 	switch (op->type) {
 	case RZ_BIN_DWARF_LINE_OP_TYPE_STD:
 		switch (op->opcode) {
-		case DW_LNS_copy: 
+		case DW_LNS_copy:
 			if (sdb_addrinfo && hdr->file_names) {
 				int fnidx = regs->file - 1;
 				if (fnidx >= 0 && fnidx < hdr->file_names_count) {
 					char *full_file = rz_bin_dwarf_line_header_get_full_file_path(sdb_addrinfo, hdr, &hdr->file_names[fnidx]);
-					add_sdb_addrline(sdb_addrinfo, regs->address, full_file, regs->line, mode, print);
+					add_sdb_addrline(sdb_addrinfo, regs->address, full_file, regs->line);
 					free(full_file);
 				}
 			}
