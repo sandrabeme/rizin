@@ -238,12 +238,62 @@ RZ_API void rz_core_bin_dwarf_print_aranges(RzList /*<RzBinDwarfARangeSet>*/ *ar
 	rz_cons_print("\n");
 }
 
-static void print_line_op(RzBinDwarfLineOp *op) {
+/**
+ * \param regs optional, the state after op has been executed. If not null, some meaningful results from this context will be shown.
+ */
+static void print_line_op(RzBinDwarfLineOp *op, RzBinDwarfLineHeader *hdr, RZ_NULLABLE RzBinDwarfSMRegisters *regs) {
 	switch (op->type) {
 	case RZ_BIN_DWARF_LINE_OP_TYPE_STD:
 		switch (op->opcode) {
 		case DW_LNS_copy:
 			rz_cons_print("Copy\n");
+			break;
+		case DW_LNS_advance_pc:
+			rz_cons_printf("Advance PC by %" PFMT64u, op->args.advance_pc * hdr->min_inst_len);
+			if (regs) {
+				rz_cons_printf(" to 0x%" PFMT64x, regs->address);
+			}
+			break;
+		case DW_LNS_advance_line:
+			rz_cons_printf("Advance line by %" PFMT64d, op->args.advance_line);
+			if (regs) {
+				rz_cons_printf(", to %" PFMT64d, regs->line);
+			}
+			break;
+		case DW_LNS_set_file:
+			rz_cons_printf("Set file to %" PFMT64d, op->args.set_file);
+			break;
+		case DW_LNS_set_column:
+			rz_cons_printf("Set column to %" PFMT64d, op->args.set_column);
+			break;
+		case DW_LNS_negate_stmt:
+			if (regs) {
+				rz_cons_printf("Set is_stmt to %u", (unsigned int)regs->is_stmt);
+			} else {
+				rz_cons_print("Negate is_stmt");
+			}
+			break;
+		case DW_LNS_set_basic_block:
+			rz_cons_print("set_basic_block");
+			break;
+		case DW_LNS_const_add_pc:
+			rz_cons_printf("Advance PC by constant %" PFMT64u, rz_bin_dwarf_line_header_get_op_advance(hdr));
+			if (regs) {
+				rz_cons_printf(" to 0x%" PFMT64x, regs->address);
+			}
+			break;
+		case DW_LNS_fixed_advance_pc:
+			rz_cons_printf("Fixed advance pc by %" PFMT64u, op->args.fixed_advance_pc);
+			rz_cons_printf(" to %" PFMT64d, regs->address);
+			break;
+		case DW_LNS_set_prologue_end:
+			rz_cons_print("set_prologue_end");
+			break;
+		case DW_LNS_set_epilogue_begin:
+			rz_cons_print("set_epilogue_begin");
+			break;
+		case DW_LNS_set_isa:
+			rz_cons_printf("set_isa to %" PFMT64u, op->args.set_isa);
 			break;
 		default:
 			rz_cons_printf("Unknown Standard Opcode %u\n", (unsigned int)op->opcode);
@@ -255,6 +305,7 @@ static void print_line_op(RzBinDwarfLineOp *op) {
 	case RZ_BIN_DWARF_LINE_OP_TYPE_SPEC:
 		break;
 	}
+	rz_cons_print("\n");
 }
 
 RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines) {
@@ -296,10 +347,14 @@ RZ_API void rz_core_bin_dwarf_print_lines(RzList /*<RzBinDwarfLineInfo>*/ *lines
 			rz_cons_print("\n");
 		}
 		if (li->ops_count && li->ops) {
+			// also execute all ops simultaneously which gives us nice intermediate value printing
+			RzBinDwarfSMRegisters regs;
+			rz_bin_dwarf_line_header_reset_regs(&li->header, &regs);
 			rz_cons_print(" Line Number Statements:\n");
 			for (size_t i = 0; i < li->ops_count; i++) {
+				rz_bin_dwarf_line_op_run(NULL, &li->header, &regs, &li->ops[i]);
 				rz_cons_print("  ");
-				print_line_op(&li->ops[i]);
+				print_line_op(&li->ops[i], &li->header, &regs);
 			}
 			rz_cons_print("\n");
 		}

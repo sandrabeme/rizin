@@ -854,9 +854,16 @@ typedef enum {
 typedef struct {
 	RzBinDwarfLineOpType type;
 	ut8 opcode;
-	union {
-		ut64 std_args[RZ_BIN_DWARF_LINE_OP_ARGS_MAX]; //< for type == RZ_BIN_DWARF_LINE_OP_TYPE_STD
-	}
+	struct {
+		union {
+			ut64 advance_pc;
+			st64 advance_line;
+			ut64 set_file;
+			ut64 set_column;
+			ut64 fixed_advance_pc;
+			ut64 set_isa;
+		};
+	} args;
 } RzBinDwarfLineOp;
 
 /**
@@ -918,9 +925,6 @@ RZ_API const char *rz_bin_dwarf_get_unit_type_name(ut64 unit_type);
 RZ_API const char *rz_bin_dwarf_get_lang_name(ut64 lang);
 
 RZ_API RzList /*<RzBinDwarfARangeSet>*/ *rz_bin_dwarf_parse_aranges(RzBinFile *binfile);
-RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result);
-RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, const RzBinDwarfLineHeader *header,
-	const RzBinDwarfLineFileEntry *file);
 RZ_API RzBinDwarfDebugAbbrev *rz_bin_dwarf_parse_abbrev(RzBinFile *binfile);
 RZ_API RzBinDwarfDebugInfo *rz_bin_dwarf_parse_info(RzBinFile *binfile, RzBinDwarfDebugAbbrev *da);
 RZ_API HtUP /*<offset, RzBinDwarfLocList*/ *rz_bin_dwarf_parse_loc(RzBinFile *binfile, int addr_size);
@@ -928,6 +932,12 @@ RZ_API void rz_bin_dwarf_arange_set_free(RzBinDwarfARangeSet *set);
 RZ_API void rz_bin_dwarf_loc_free(HtUP /*<offset, RzBinDwarfLocList*>*/ *loc_table);
 RZ_API void rz_bin_dwarf_debug_info_free(RzBinDwarfDebugInfo *inf);
 RZ_API void rz_bin_dwarf_debug_abbrev_free(RzBinDwarfDebugAbbrev *da);
+
+RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result);
+RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, const RzBinDwarfLineHeader *header, const RzBinDwarfLineFileEntry *file);
+RZ_API ut64 rz_bin_dwarf_line_header_get_op_advance(const RzBinDwarfLineHeader *header);
+RZ_API void rz_bin_dwarf_line_header_reset_regs(const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs);
+RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs, RzBinDwarfLineOp *op);
 RZ_API void rz_bin_dwarf_line_info_free(RzBinDwarfLineInfo *li);
 
 #ifdef __cplusplus

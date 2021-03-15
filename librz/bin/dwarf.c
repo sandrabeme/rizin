@@ -543,6 +543,18 @@ RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, cons
 	return r;
 }
 
+/**
+ * \return the amount of bytes that DW_LNS_const_add_pc advances
+ */
+RZ_API ut64 rz_bin_dwarf_line_header_get_op_advance(const RzBinDwarfLineHeader *header) {
+	ut8 adj_opcode = 255 - header->opcode_base;
+	if (header->line_range > 0) { // to dodge division by zero
+		return (adj_opcode / header->line_range) * header->min_inst_len;
+	} else {
+		return 0;
+	}
+}
+
 static const ut8 *parse_line_header(
 	RzBinFile *bf, const ut8 *buf, const ut8 *buf_end,
 	RzBinDwarfLineHeader *hdr, int mode, PrintfCallback print,
@@ -614,7 +626,7 @@ typedef struct {
 	 */
 	RZ_NULLABLE Sdb *sdb_addrline;
 	RzBinDwarfSMRegisters regs;
-} LineParseOpCtx;
+} ParseLineOpCtx;
 
 static inline void add_sdb_addrline(Sdb *s, ut64 addr, const char *file, ut64 line) {
 	const char *p;
@@ -803,146 +815,63 @@ static const ut8 *parse_spec_opcode(
  * \return the number of leb128 args the std opcode takes, EXCEPT for DW_LNS_fixed_advance_pc! (see Dwarf spec)
  */
 static size_t std_opcode_args_count(const RzBinDwarfLineHeader *hdr, ut8 opcode) {
-	// known opcodes
-	switch (opcode) {
-	case DW_LNS_copy:
-	case DW_LNS_negate_stmt:
-	case DW_LNS_set_basic_block:
-	case DW_LNS_const_add_pc:
-	case DW_LNS_set_prologue_end:
-	case DW_LNS_set_epilogue_begin:
-		return 0;
-	case DW_LNS_advance_pc:
-	case DW_LNS_advance_line:
-	case DW_LNS_set_file:
-	case DW_LNS_set_column:
-	case DW_LNS_fixed_advance_pc: // special case!
-	case DW_LNS_set_isa:
-		return 1;
-	default:
-		break;
-	}
-	// unknown opcode, take from the given sizes if possible
 	if (!opcode || opcode > hdr->opcode_base - 1 || !hdr->std_opcode_lengths) {
 		return 0;
 	}
 	return hdr->std_opcode_lengths[opcode - 1];
 }
 
-static const ut8 *parse_std_opcode(
-	const RzBin *bin, const ut8 *obuf, size_t len,
-	const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs,
-	ut8 opcode, int mode, bool big_endian) {
-
-	rz_return_val_if_fail(bin && bin->cur && obuf && hdr && regs, NULL);
-
+static const ut8 *parse_std_opcode(RzBinDwarfLineOp *op, const RzBinDwarfLineHeader *hdr, const ut8 *obuf, size_t len, ut8 opcode, bool big_endian) {
+	rz_return_val_if_fail(op && hdr && obuf, NULL);
 	const ut8 *buf = obuf;
 	const ut8 *buf_end = obuf + len;
-	ut64 addr = 0LL;
-	st64 sbuf;
-	ut8 adj_opcode;
-	ut64 op_advance;
-	ut16 operand;
 
-	size_t args_count = std_opcode_args_count(hdr, opcode);
-
-
-#if 0
+	op->type = RZ_BIN_DWARF_LINE_OP_TYPE_STD;
+	op->opcode = opcode;
 	switch (opcode) {
-	case DW_LNS_copy:
-		// done
-		break;
 	case DW_LNS_advance_pc:
-		buf = rz_uleb128(buf, buf_end - buf, &addr, NULL);
-		regs->address += addr * hdr->min_inst_len;
-		if (mode == RZ_MODE_PRINT) {
-			print("Advance PC by %" PFMT64d " to 0x%" PFMT64x "\n",
-				addr * hdr->min_inst_len, regs->address);
-		}
+		buf = rz_uleb128(buf, buf_end - buf, &op->args.advance_pc, NULL);
 		break;
 	case DW_LNS_advance_line:
-		buf = rz_leb128(buf, buf_end - buf, &sbuf);
-		regs->line += sbuf;
-		if (mode == RZ_MODE_PRINT) {
-			print("Advance line by %" PFMT64d ", to %" PFMT64d "\n", sbuf, regs->line);
-		}
+		buf = rz_leb128(buf, buf_end - buf, &op->args.advance_line);
 		break;
 	case DW_LNS_set_file:
-		buf = rz_uleb128(buf, buf_end - buf, &addr, NULL);
-		if (mode == RZ_MODE_PRINT) {
-			print("Set file to %" PFMT64d "\n", addr);
-		}
-		regs->file = addr;
+		buf = rz_uleb128(buf, buf_end - buf, &op->args.set_file, NULL);
 		break;
 	case DW_LNS_set_column:
-		buf = rz_uleb128(buf, buf_end - buf, &addr, NULL);
-		if (mode == RZ_MODE_PRINT) {
-			print("Set column to %" PFMT64d "\n", addr);
-		}
-		regs->column = addr;
-		break;
-	case DW_LNS_negate_stmt:
-		regs->is_stmt = regs->is_stmt ? DWARF_FALSE : DWARF_TRUE;
-		if (mode == RZ_MODE_PRINT) {
-			print("Set is_stmt to %d\n", regs->is_stmt);
-		}
-		break;
-	case DW_LNS_set_basic_block:
-		if (mode == RZ_MODE_PRINT) {
-			print("set_basic_block\n");
-		}
-		regs->basic_block = DWARF_TRUE;
-		break;
-	case DW_LNS_const_add_pc:
-		adj_opcode = 255 - hdr->opcode_base;
-		if (hdr->line_range > 0) { // to dodge division by zero
-			op_advance = (adj_opcode / hdr->line_range) * hdr->min_inst_len;
-		} else {
-			op_advance = 0;
-		}
-		regs->address += op_advance;
-		if (mode == RZ_MODE_PRINT) {
-			print("Advance PC by constant %" PFMT64d " to 0x%" PFMT64x "\n",
-				op_advance, regs->address);
-		}
+		buf = rz_uleb128(buf, buf_end - buf, &op->args.set_column, NULL);
 		break;
 	case DW_LNS_fixed_advance_pc:
-		operand = READ16(buf);
-		regs->address += operand;
-		if (mode == RZ_MODE_PRINT) {
-			print("Fixed advance pc to %" PFMT64d "\n", regs->address);
-		}
-		break;
-	case DW_LNS_set_prologue_end:
-		regs->prologue_end = ~0;
-		if (mode == RZ_MODE_PRINT) {
-			print("set_prologue_end\n");
-		}
-		break;
-	case DW_LNS_set_epilogue_begin:
-		regs->epilogue_begin = ~0;
-		if (mode == RZ_MODE_PRINT) {
-			print("set_epilogue_begin\n");
-		}
+		op->args.fixed_advance_pc = READ16(buf);
 		break;
 	case DW_LNS_set_isa:
-		buf = rz_uleb128(buf, buf_end - buf, &addr, NULL);
-		regs->isa = addr;
-		if (mode == RZ_MODE_PRINT) {
-			print("set_isa\n");
-		}
+		buf = rz_uleb128(buf, buf_end - buf, &op->args.set_isa, NULL);
 		break;
-	default:
-		if (mode == RZ_MODE_PRINT) {
-			print("Unexpected std opcode %d\n", opcode);
-		}
+
+	// known opcodes that take no args
+	case DW_LNS_copy:
+	case DW_LNS_negate_stmt:
+	case DW_LNS_set_basic_block:
+	case DW_LNS_const_add_pc:
+	case DW_LNS_set_prologue_end:
+	case DW_LNS_set_epilogue_begin:
 		break;
+
+	// unknown operands, skip the number of args given in the header.
+	default: {
+		size_t args_count = std_opcode_args_count(hdr, opcode);
+		for (size_t i = 0; i < args_count; i++) {
+			buf = rz_uleb128(buf, buf_end - buf, &op->args.advance_pc, NULL);
+			if (!buf) {
+				break;
+			}
+		}
 	}
-#endif
+	}
 	return buf;
 }
 
-static void set_regs_default(const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs) {
+RZ_API void rz_bin_dwarf_line_header_reset_regs(const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs) {
 	regs->address = 0;
 	regs->file = 1;
 	regs->line = 1;
@@ -955,8 +884,7 @@ static void set_regs_default(const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegist
 	regs->isa = 0;
 }
 
-RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hdr,
-		RzBinDwarfSMRegisters *regs, RzBinDwarfLineOp *op) {
+RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs, RzBinDwarfLineOp *op) {
 	switch (op->type) {
 	case RZ_BIN_DWARF_LINE_OP_TYPE_STD:
 		switch (op->opcode) {
@@ -970,6 +898,39 @@ RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hd
 				}
 			}
 			regs->basic_block = DWARF_FALSE;
+			break;
+		case DW_LNS_advance_pc:
+			regs->address += op->args.advance_pc * hdr->min_inst_len;
+			break;
+		case DW_LNS_advance_line:
+			regs->line += op->args.advance_line;
+			break;
+		case DW_LNS_set_file:
+			regs->file = op->args.set_file;
+			break;
+		case DW_LNS_set_column:
+			regs->column = op->args.set_column;
+			break;
+		case DW_LNS_negate_stmt:
+			regs->is_stmt = regs->is_stmt ? DWARF_FALSE : DWARF_TRUE;
+			break;
+		case DW_LNS_set_basic_block:
+			regs->basic_block = DWARF_TRUE;
+			break;
+		case DW_LNS_const_add_pc:
+			regs->address += rz_bin_dwarf_line_header_get_op_advance(hdr);
+			break;
+		case DW_LNS_fixed_advance_pc:
+			regs->address += op->args.fixed_advance_pc;
+			break;
+		case DW_LNS_set_prologue_end:
+			regs->prologue_end = ~0;
+			break;
+		case DW_LNS_set_epilogue_begin:
+			regs->epilogue_begin = ~0;
+			break;
+		case DW_LNS_set_isa:
+			regs->isa = op->args.set_isa;
 			break;
 		default:
 			return false;
@@ -1001,17 +962,18 @@ static size_t parse_opcodes(const RzBin *bin, const ut8 *obuf,
 	while (buf && buf + 1 < buf_end) {
 		opcode = *buf++;
 		len--;
+		RzBinDwarfLineOp op = { 0 };
 		if (!opcode) {
 			ext_opcode = *buf;
 			buf = parse_ext_opcode(bin, buf, len, hdr, regs, mode, big_endian);
 			if (!buf || ext_opcode == DW_LNE_end_sequence) {
-				set_regs_default(hdr, regs); // end_sequence should reset regs to default
+				rz_bin_dwarf_line_header_reset_regs(hdr, regs); // end_sequence should reset regs to default
 				break;
 			}
 		} else if (opcode >= hdr->opcode_base) {
 			buf = parse_spec_opcode(bin, buf, len, hdr, regs, opcode, mode);
 		} else {
-			buf = parse_std_opcode(bin, buf, len, hdr, regs, opcode, mode, big_endian);
+			buf = parse_std_opcode(&op, hdr, buf, len, opcode, big_endian);
 		}
 		len = (size_t)(buf_end - buf);
 	}
@@ -1057,7 +1019,7 @@ static RzList /*<RzBinDwarfLineInfo>*/ *parse_line_raw(RzBinFile *binfile, const
 		bytes_read = buf - tmpbuf;
 
 		RzBinDwarfSMRegisters regs;
-		set_regs_default(&li->header, &regs);
+		rz_bin_dwarf_line_header_reset_regs(&li->header, &regs);
 
 		// If there is more bytes in the buffer than size of the header
 		// It means that there has to be another header/comp.unit
