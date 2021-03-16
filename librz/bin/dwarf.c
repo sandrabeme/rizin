@@ -543,16 +543,26 @@ RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, cons
 	return r;
 }
 
-/**
- * \return the amount of bytes that DW_LNS_const_add_pc advances
- */
-RZ_API ut64 rz_bin_dwarf_line_header_get_op_advance(const RzBinDwarfLineHeader *header) {
-	ut8 adj_opcode = 255 - header->opcode_base;
-	if (header->line_range > 0) { // to dodge division by zero
-		return (adj_opcode / header->line_range) * header->min_inst_len;
-	} else {
+RZ_API ut64 rz_bin_dwarf_line_header_get_adj_opcode(const RzBinDwarfLineHeader *header, ut8 opcode) {
+	return opcode - header->opcode_base;
+}
+
+RZ_API ut64 rz_bin_dwarf_line_header_get_spec_op_advance_pc(const RzBinDwarfLineHeader *header, ut8 opcode) {
+	if (!header->line_range) {
+		// to dodge division by zero
 		return 0;
 	}
+	ut8 adj_opcode = rz_bin_dwarf_line_header_get_adj_opcode(header, opcode);
+	return (adj_opcode / header->line_range) * header->min_inst_len;
+}
+
+RZ_API st64 rz_bin_dwarf_line_header_get_spec_op_advance_line(const RzBinDwarfLineHeader *header, ut8 opcode) {
+	if (!header->line_range) {
+		// to dodge division by zero
+		return 0;
+	}
+	ut8 adj_opcode = rz_bin_dwarf_line_header_get_adj_opcode(header, opcode);
+	return header->line_base + (adj_opcode % header->line_range);
 }
 
 static const ut8 *parse_line_header(
@@ -766,51 +776,6 @@ static const ut8 *parse_ext_opcode(const RzBin *bin, const ut8 *obuf,
 	return buf;
 }
 
-static const ut8 *parse_spec_opcode(
-	const RzBin *bin, const ut8 *obuf, size_t len,
-	const RzBinDwarfLineHeader *hdr,
-	RzBinDwarfSMRegisters *regs,
-	ut8 opcode, int mode) {
-
-	rz_return_val_if_fail(bin && obuf && hdr && regs, NULL);
-
-	PrintfCallback print = bin->cb_printf;
-	RzBinFile *binfile = bin->cur;
-	const ut8 *buf = obuf;
-	ut8 adj_opcode = 0;
-	ut64 advance_adr;
-
-	adj_opcode = opcode - hdr->opcode_base;
-	if (!hdr->line_range) {
-		// line line-range information. move away
-		return NULL;
-	}
-	advance_adr = (adj_opcode / hdr->line_range) * hdr->min_inst_len;
-	regs->address += advance_adr;
-	int line_increment = hdr->line_base + (adj_opcode % hdr->line_range);
-	regs->line += line_increment;
-	if (mode == RZ_MODE_PRINT) {
-		print("  Special opcode %d: ", adj_opcode);
-		print("advance Address by %" PFMT64d " to 0x%" PFMT64x " and Line by %d to %" PFMT64d "\n",
-			advance_adr, regs->address, line_increment, regs->line);
-	}
-	if (binfile && binfile->sdb_addrinfo && hdr->file_names) {
-		int idx = regs->file - 1;
-		if (idx >= 0 && idx < hdr->file_names_count) {
-			char *full_file = rz_bin_dwarf_line_header_get_full_file_path(binfile->sdb_addrinfo,
-				hdr, &hdr->file_names[idx]);
-			add_sdb_addrline(binfile->sdb_addrinfo, regs->address, full_file, regs->line);
-			free(full_file);
-		}
-	}
-	regs->basic_block = DWARF_FALSE;
-	regs->prologue_end = DWARF_FALSE;
-	regs->epilogue_begin = DWARF_FALSE;
-	regs->discriminator = 0;
-
-	return buf;
-}
-
 /**
  * \return the number of leb128 args the std opcode takes, EXCEPT for DW_LNS_fixed_advance_pc! (see Dwarf spec)
  */
@@ -890,6 +855,7 @@ RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hd
 		switch (op->opcode) {
 		case DW_LNS_copy:
 			if (sdb_addrinfo && hdr->file_names) {
+				// TODO: code duplication here
 				int fnidx = regs->file - 1;
 				if (fnidx >= 0 && fnidx < hdr->file_names_count) {
 					char *full_file = rz_bin_dwarf_line_header_get_full_file_path(sdb_addrinfo, hdr, &hdr->file_names[fnidx]);
@@ -918,7 +884,7 @@ RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hd
 			regs->basic_block = DWARF_TRUE;
 			break;
 		case DW_LNS_const_add_pc:
-			regs->address += rz_bin_dwarf_line_header_get_op_advance(hdr);
+			regs->address += rz_bin_dwarf_line_header_get_spec_op_advance_pc(hdr, 255);
 			break;
 		case DW_LNS_fixed_advance_pc:
 			regs->address += op->args.fixed_advance_pc;
@@ -938,8 +904,24 @@ RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hd
 		break;
 	case RZ_BIN_DWARF_LINE_OP_TYPE_EXT:
 		break;
-	case RZ_BIN_DWARF_LINE_OP_TYPE_SPEC:
+	case RZ_BIN_DWARF_LINE_OP_TYPE_SPEC: {
+		regs->address += rz_bin_dwarf_line_header_get_spec_op_advance_pc(hdr, op->opcode);
+		regs->line += rz_bin_dwarf_line_header_get_spec_op_advance_line(hdr, op->opcode);
+		if (sdb_addrinfo && hdr->file_names) {
+			// TODO: code duplication here
+			int idx = regs->file - 1;
+			if (idx >= 0 && idx < hdr->file_names_count) {
+				char *full_file = rz_bin_dwarf_line_header_get_full_file_path(sdb_addrinfo, hdr, &hdr->file_names[idx]);
+				add_sdb_addrline(sdb_addrinfo, regs->address, full_file, regs->line);
+				free(full_file);
+			}
+		}
+		regs->basic_block = DWARF_FALSE;
+		regs->prologue_end = DWARF_FALSE;
+		regs->epilogue_begin = DWARF_FALSE;
+		regs->discriminator = 0;
 		break;
+	}
 	default:
 		return false;
 	}
@@ -971,7 +953,9 @@ static size_t parse_opcodes(const RzBin *bin, const ut8 *obuf,
 				break;
 			}
 		} else if (opcode >= hdr->opcode_base) {
-			buf = parse_spec_opcode(bin, buf, len, hdr, regs, opcode, mode);
+			// special opcode without args, no further parsing needed
+			op.type = RZ_BIN_DWARF_LINE_OP_TYPE_SPEC;
+			op.opcode = opcode;
 		} else {
 			buf = parse_std_opcode(&op, hdr, buf, len, opcode, big_endian);
 		}

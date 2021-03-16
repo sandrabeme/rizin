@@ -882,8 +882,8 @@ typedef struct {
 
 typedef enum {
 	RZ_BIN_DWARF_LINE_INFO_MASK_BASIC = 0x0, //< parse just the headers
-	RZ_BIN_DWARF_LINE_INFO_MASK_OPS   = 0x1, //< decode and output all instructions
-	RZ_BIN_DWARF_LINE_INFO_MASK_ROWS  = 0x2  //< run instructions and ouput the resulting line infos
+	RZ_BIN_DWARF_LINE_INFO_MASK_OPS = 0x1, //< decode and output all instructions
+	RZ_BIN_DWARF_LINE_INFO_MASK_ROWS = 0x2 //< run instructions and ouput the resulting line infos
 } RzBinDwarfLineInfoMask;
 
 typedef struct rz_bin_dwarf_loc_entry_t {
@@ -935,7 +935,9 @@ RZ_API void rz_bin_dwarf_debug_abbrev_free(RzBinDwarfDebugAbbrev *da);
 
 RZ_API RzList *rz_bin_dwarf_parse_line(RzBinFile *binfile, int mode, RzList **the_actual_result);
 RZ_API char *rz_bin_dwarf_line_header_get_full_file_path(Sdb *sdb_addrinfo, const RzBinDwarfLineHeader *header, const RzBinDwarfLineFileEntry *file);
-RZ_API ut64 rz_bin_dwarf_line_header_get_op_advance(const RzBinDwarfLineHeader *header);
+RZ_API ut64 rz_bin_dwarf_line_header_get_adj_opcode(const RzBinDwarfLineHeader *header, ut8 opcode);
+RZ_API ut64 rz_bin_dwarf_line_header_get_spec_op_advance_pc(const RzBinDwarfLineHeader *header, ut8 opcode);
+RZ_API st64 rz_bin_dwarf_line_header_get_spec_op_advance_line(const RzBinDwarfLineHeader *header, ut8 opcode);
 RZ_API void rz_bin_dwarf_line_header_reset_regs(const RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs);
 RZ_API bool rz_bin_dwarf_line_op_run(Sdb *sdb_addrinfo, RzBinDwarfLineHeader *hdr, RzBinDwarfSMRegisters *regs, RzBinDwarfLineOp *op);
 RZ_API void rz_bin_dwarf_line_info_free(RzBinDwarfLineInfo *li);

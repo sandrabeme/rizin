@@ -277,7 +277,7 @@ static void print_line_op(RzBinDwarfLineOp *op, RzBinDwarfLineHeader *hdr, RZ_NU
 			rz_cons_print("set_basic_block");
 			break;
 		case DW_LNS_const_add_pc:
-			rz_cons_printf("Advance PC by constant %" PFMT64u, rz_bin_dwarf_line_header_get_op_advance(hdr));
+			rz_cons_printf("Advance PC by constant %" PFMT64u, rz_bin_dwarf_line_header_get_spec_op_advance_pc(hdr, 255));
 			if (regs) {
 				rz_cons_printf(" to 0x%" PFMT64x, regs->address);
 			}
@@ -303,6 +303,15 @@ static void print_line_op(RzBinDwarfLineOp *op, RzBinDwarfLineHeader *hdr, RZ_NU
 	case RZ_BIN_DWARF_LINE_OP_TYPE_EXT:
 		break;
 	case RZ_BIN_DWARF_LINE_OP_TYPE_SPEC:
+		rz_cons_printf("  Special opcode %u: ", (unsigned int)rz_bin_dwarf_line_header_get_adj_opcode(hdr, op->opcode));
+		rz_cons_printf("advance Address by %" PFMT64u, rz_bin_dwarf_line_header_get_spec_op_advance_pc(hdr, op->opcode));
+		if (regs) {
+			rz_cons_printf(" to 0x%" PFMT64x, regs->address);
+		}
+		rz_cons_printf(" and Line by %" PFMT64d, rz_bin_dwarf_line_header_get_spec_op_advance_line(hdr, op->opcode));
+		if (regs) {
+			rz_cons_printf(" to %" PFMT64u, regs->line);
+		}
 		break;
 	}
 	rz_cons_print("\n");
